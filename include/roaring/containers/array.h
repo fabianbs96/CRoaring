@@ -27,7 +27,7 @@ namespace internal {
 #endif
 
 /* Containers with DEFAULT_MAX_SIZE or less integers should be arrays */
-enum { DEFAULT_MAX_SIZE = 4096 };
+enum { DEFAULT_MAX_SIZE = 64 };
 
 /* struct array_container - sparse representation of a bitmap
  *
