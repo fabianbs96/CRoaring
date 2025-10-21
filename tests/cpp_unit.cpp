@@ -16,12 +16,12 @@
 
 #include <roaring/misc/configreport.h>
 #include <roaring/roaring.h>  // access to pure C exported API for testing
+#include <roaring/roaring.hh>
+#include <roaring/roaring64map.hh>
 
 #include "config.h"
-#include "roaring.hh"
-using roaring::Roaring;  // the C++ wrapper class
 
-#include "roaring64map.hh"
+using roaring::Roaring;       // the C++ wrapper class
 using roaring::Roaring64Map;  // C++ class extended for 64-bit numbers
 
 #include "roaring64map_checked.hh"
@@ -1476,6 +1476,9 @@ DEFINE_TEST(test_cpp_frozen_64) {
     roaring_aligned_free(buf);
 }
 
+#if ROARING_UNSAFE_FROZEN_TESTS
+// This test is unsafe, as it may trigger unaligned memory access
+// It is only enabled if ROARING_UNSAFE_FROZEN_TESTS is defined.
 DEFINE_TEST(test_cpp_frozen_portable) {
     const uint64_t s = 65536;
 
@@ -1548,7 +1551,11 @@ DEFINE_TEST(test_cpp_frozen_portable) {
 
     free(buf);
 }
+#endif  // ROARING_UNSAFE_FROZEN_TESTS
 
+#if ROARING_UNSAFE_FROZEN_TESTS
+// This test is unsafe, as it may trigger unaligned memory access
+// It is only enabled if ROARING_UNSAFE_FROZEN_TESTS is defined.
 DEFINE_TEST(test_cpp_frozen_64_portable) {
     const uint64_t s = 65536;
 
@@ -1611,6 +1618,7 @@ DEFINE_TEST(test_cpp_frozen_64_portable) {
 
     free(buf);
 }
+#endif  // ROARING_UNSAFE_FROZEN_TESTS
 
 DEFINE_TEST(test_cpp_flip) {
     {
@@ -2207,8 +2215,10 @@ int main() {
         cmocka_unit_test(test_cpp_bidirectional_iterator_64),
         cmocka_unit_test(test_cpp_frozen),
         cmocka_unit_test(test_cpp_frozen_64),
+#if ROARING_UNSAFE_FROZEN_TESTS
         cmocka_unit_test(test_cpp_frozen_portable),
         cmocka_unit_test(test_cpp_frozen_64_portable),
+#endif  // ROARING_UNSAFE_FROZEN_TESTS
         cmocka_unit_test(test_cpp_flip),
         cmocka_unit_test(test_cpp_flip_closed),
         cmocka_unit_test(test_cpp_flip_64),

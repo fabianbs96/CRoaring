@@ -634,16 +634,62 @@ DEFINE_TEST(test_remove_bulk) {
 }
 
 DEFINE_TEST(test_remove_many) {
-    roaring64_bitmap_t* r = roaring64_bitmap_create();
-    std::array<uint64_t, 1000> vals;
-    std::iota(vals.begin(), vals.end(), 0);
+    {
+        // Remove all values until empty, across multiple containers.
+        roaring64_bitmap_t* r = roaring64_bitmap_create();
+        std::array<uint64_t, 1000> vals;
+        std::iota(vals.begin(), vals.end(), 0);
 
-    roaring64_bitmap_add_many(r, vals.size(), vals.data());
-    roaring64_bitmap_remove_many(r, vals.size(), vals.data());
-    assert_r64_valid(r);
-    for (uint64_t i = 0; i < 1000; ++i) {
-        assert_false(roaring64_bitmap_contains(r, vals[i]));
+        roaring64_bitmap_add_many(r, vals.size(), vals.data());
+        roaring64_bitmap_remove_many(r, vals.size(), vals.data());
+        assert_r64_valid(r);
+        for (uint64_t i = 0; i < 1000; ++i) {
+            assert_false(roaring64_bitmap_contains(r, vals[i]));
+        }
+        assert_true(roaring64_bitmap_is_empty(r));
+        roaring64_bitmap_free(r);
     }
+    {
+        // Remove values not present.
+        roaring64_bitmap_t* r = roaring64_bitmap_from(123, 124);
+        std::array<uint64_t, 1> vals = {125};
+        roaring64_bitmap_remove_many(r, 1, vals.data());
+        assert_r64_valid(r);
+        roaring64_bitmap_free(r);
+    }
+    {
+        // Remove all values in a container.
+        roaring64_bitmap_t* r = roaring64_bitmap_from(123, 124);
+        std::array<uint64_t, 3> vals = {123, 124, 125};
+        roaring64_bitmap_remove_many(r, 3, vals.data());
+        assert_true(roaring64_bitmap_is_empty(r));
+        assert_r64_valid(r);
+        roaring64_bitmap_free(r);
+    }
+    {
+        // Remove a value multiple times.
+        roaring64_bitmap_t* r = roaring64_bitmap_from(123, 124);
+        std::array<uint64_t, 3> vals = {123, 124, 124};
+        roaring64_bitmap_remove_many(r, 3, vals.data());
+        assert_true(roaring64_bitmap_is_empty(r));
+        assert_r64_valid(r);
+        roaring64_bitmap_free(r);
+    }
+}
+
+DEFINE_TEST(test_remove_many_issue_742) {
+    roaring64_bitmap_t* r = roaring64_bitmap_from(123ULL, 124ULL);
+    uint64_t vals[3] = {123ULL, 124ULL, 125ULL};
+    roaring64_bitmap_remove_many(r, 3, vals);
+    assert_true(roaring64_bitmap_is_empty(r));
+    roaring64_bitmap_free(r);
+}
+
+DEFINE_TEST(test_remove_many_issue_742B) {
+    roaring64_bitmap_t* r = roaring64_bitmap_from(123ULL, 124ULL);
+    uint64_t vals[3] = {123ULL, 124ULL, 124ULL};
+    roaring64_bitmap_remove_many(r, 3, vals);
+    assert_true(roaring64_bitmap_is_empty(r));
     roaring64_bitmap_free(r);
 }
 
@@ -1974,10 +2020,38 @@ DEFINE_TEST(test_stats) {
     roaring64_bitmap_free(r1);
 }
 
+DEFINE_TEST(test_iterator_read_past_end_can_go_previous) {
+    roaring64_bitmap_t* bitmap = roaring64_bitmap_create();
+    assert_non_null(bitmap);
+
+    roaring64_bitmap_add(bitmap, 10);
+    assert_r64_valid(bitmap);
+
+    roaring64_iterator_t* iter = roaring64_iterator_create(bitmap);
+    assert_non_null(iter);
+
+    uint64_t buffer[100];
+    uint64_t actual_read1 = roaring64_iterator_read(
+        iter, buffer, sizeof(buffer) / sizeof(buffer[0]));
+    assert_int_equal(actual_read1, 1);  // Only one value should be present
+
+    // Should now be one past the end, but should be able to move backwards
+    assert_false(roaring64_iterator_has_value(iter));
+    bool prev_result = roaring64_iterator_previous(iter);
+    assert_true(prev_result);
+    assert_true(roaring64_iterator_has_value(iter));
+    assert_int_equal(roaring64_iterator_value(iter), 10);
+
+    roaring64_iterator_free(iter);
+    roaring64_bitmap_free(bitmap);
+}
+
 }  // namespace
 
 int main() {
     const struct CMUnitTest tests[] = {
+        cmocka_unit_test(test_remove_many_issue_742),
+        cmocka_unit_test(test_remove_many_issue_742B),
         cmocka_unit_test(fuzz_deserializer),
         cmocka_unit_test(test_copy),
         cmocka_unit_test(test_from_range),
@@ -2038,6 +2112,7 @@ int main() {
         cmocka_unit_test(test_iterator_move_equalorlarger),
         cmocka_unit_test(test_iterator_read),
         cmocka_unit_test(test_stats),
+        cmocka_unit_test(test_iterator_read_past_end_can_go_previous),
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
 }

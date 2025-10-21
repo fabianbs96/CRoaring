@@ -19,10 +19,10 @@ if(CMAKE_C_COMPILER_ID STREQUAL "AppleClang" AND CMAKE_C_COMPILER_VERSION VERSIO
 endif()
 set(ROARING_LIB_NAME roaring)
 set(PROJECT_VERSION_MAJOR 4)
-set(PROJECT_VERSION_MINOR 3)
-set(PROJECT_VERSION_PATCH 1)
-set(ROARING_LIB_VERSION "4.3.1" CACHE STRING "Roaring library version")
-set(ROARING_LIB_SOVERSION "18" CACHE STRING "Roaring library soversion")
+set(PROJECT_VERSION_MINOR 4)
+set(PROJECT_VERSION_PATCH 2)
+set(ROARING_LIB_VERSION "4.4.2" CACHE STRING "Roaring library version")
+set(ROARING_LIB_SOVERSION "19" CACHE STRING "Roaring library soversion")
 
 option(ROARING_EXCEPTIONS "Enable exception-throwing interface" ON)
 if(NOT ROARING_EXCEPTIONS)
@@ -48,6 +48,7 @@ option(ROARING_BUILD_C_TESTS_AS_CPP "Build test C files using C++ compilation" O
 option(ROARING_SANITIZE "Sanitize addresses" OFF)
 option(ROARING_SANITIZE_THREADS "Sanitize threads" OFF)
 option(ROARING_SANITIZE_UNDEFINED "Sanitize undefined behaviors" OFF)
+option(ROARING_UNSAFE_FROZEN_TESTS "If ON, tests some frozen functions which are unsafe as they include unaligned reads, this can cause crashes" OFF)
 
 option(ENABLE_ROARING_TESTS "If OFF, disable unit tests altogether" ON)
 if(NOT ENABLE_ROARING_TESTS)
@@ -84,7 +85,9 @@ target_include_directories(roaring-headers-cpp INTERFACE
 ####
 ### Some users want the C++ header files to be installed as well.
 ### C++ header files get installed to /usr/local/include/roaring typically
-SET(CPP_ROARING_HEADERS cpp/roaring64map.hh  cpp/roaring.hh) # needs to be updated if we add more files
+SET(CPP_ROARING_HEADERS
+   cpp/roaring/roaring64map.hh
+   cpp/roaring/roaring.hh) # needs to be updated if we add more files
 install(FILES ${CPP_ROARING_HEADERS} DESTINATION include/roaring)
 install(DIRECTORY include/roaring DESTINATION include)
 
@@ -108,7 +111,7 @@ configure_file ("${CMAKE_CURRENT_SOURCE_DIR}/tests/config.h.in"
 #################################
 
 add_subdirectory(src)
-if(ENABLE_ROARING_TESTS)
+if(ENABLE_ROARING_TESTS AND NOT EMSCRIPTEN)
   if(CMAKE_SIZEOF_VOID_P EQUAL 8) # we only include the benchmarks on 64-bit systems.
     add_subdirectory(benchmarks)
   endif()
@@ -116,7 +119,7 @@ if(ENABLE_ROARING_TESTS)
 endif()
 find_program(BASH bash)
 
-if(ENABLE_ROARING_TESTS AND BASH)
+if(ENABLE_ROARING_TESTS AND BASH AND NOT EMSCRIPTEN)
   message(STATUS "Amalgamation tests enabled")
   set(CROARING_SINGLEHEADER_FILES
     ${CMAKE_CURRENT_BINARY_DIR}/amalgamation_demo.c

@@ -1,10 +1,11 @@
+#include <array>
 #include <benchmark/benchmark.h>
 #include <random>
 #include <set>
 
 #include "performancecounters/event_counter.h"
 #include "roaring/roaring64.h"
-#include "roaring64map.hh"
+#include "roaring/roaring64map.hh"
 
 namespace roaring {
 

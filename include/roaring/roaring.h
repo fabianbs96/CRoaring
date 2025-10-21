@@ -63,14 +63,28 @@ inline void roaring_bitmap_init_cleared(roaring_bitmap_t *r) {
 /**
  * Add all the values between min (included) and max (excluded) that are at a
  * distance k*step from min.
+ * The returned pointer may be NULL in case of errors.
  */
 roaring_bitmap_t *roaring_bitmap_from_range(uint64_t min, uint64_t max,
                                             uint32_t step);
 
 /**
  * Creates a new bitmap from a pointer of uint32_t integers
+ * The returned pointer may be NULL in case of errors.
  */
 roaring_bitmap_t *roaring_bitmap_of_ptr(size_t n_args, const uint32_t *vals);
+
+/**
+ * Check if the bitmap contains any shared containers.
+ */
+bool roaring_contains_shared(const roaring_bitmap_t *r);
+
+/**
+ * Unshare all shared containers.
+ * Returns true if any unsharing was performed, false if there were no shared
+ * containers.
+ */
+bool roaring_unshare_all(roaring_bitmap_t *r);
 
 /*
  * Whether you want to use copy-on-write.
@@ -80,6 +94,9 @@ roaring_bitmap_t *roaring_bitmap_of_ptr(size_t n_args, const uint32_t *vals);
  * Note: If you do turn this flag to 'true', enabling COW, then ensure that you
  * do so for all of your bitmaps, since interactions between bitmaps with and
  * without COW is unsafe.
+ *
+ * When setting this flag to false, if any containers are shared, they
+ * are unshared (cloned) immediately.
  */
 inline bool roaring_bitmap_get_copy_on_write(const roaring_bitmap_t *r) {
     return r->high_low_container.flags & ROARING_FLAG_COW;
@@ -88,10 +105,18 @@ inline void roaring_bitmap_set_copy_on_write(roaring_bitmap_t *r, bool cow) {
     if (cow) {
         r->high_low_container.flags |= ROARING_FLAG_COW;
     } else {
+        if (roaring_bitmap_get_copy_on_write(r)) {
+            roaring_unshare_all(r);
+        }
         r->high_low_container.flags &= ~ROARING_FLAG_COW;
     }
 }
 
+/**
+ * Return a copy of the bitmap with all values shifted by offset.
+ * The returned pointer may be NULL in case of errors. The caller is responsible
+ * for freeing the return bitmap.
+ */
 roaring_bitmap_t *roaring_bitmap_add_offset(const roaring_bitmap_t *bm,
                                             int64_t offset);
 /**
@@ -150,6 +175,7 @@ CROARING_DEPRECATED roaring_bitmap_t *roaring_bitmap_of(size_t n, ...);
 /**
  * Copies a bitmap (this does memory allocation).
  * The caller is responsible for memory management.
+ * The returned pointer may be NULL in case of errors.
  */
 roaring_bitmap_t *roaring_bitmap_copy(const roaring_bitmap_t *r);
 
@@ -181,6 +207,7 @@ void roaring_bitmap_printf(const roaring_bitmap_t *r);
  * bitmaps, two-by-two, it is best to start with the smallest bitmap.
  * You may also rely on roaring_bitmap_and_inplace to avoid creating
  * many temporary bitmaps.
+ * The returned pointer may be NULL in case of errors.
  */
 roaring_bitmap_t *roaring_bitmap_and(const roaring_bitmap_t *r1,
                                      const roaring_bitmap_t *r2);
@@ -243,6 +270,7 @@ void roaring_bitmap_and_inplace(roaring_bitmap_t *r1,
 /**
  * Computes the union between two bitmaps and returns new bitmap. The caller is
  * responsible for memory management.
+ * The returned pointer may be NULL in case of errors.
  */
 roaring_bitmap_t *roaring_bitmap_or(const roaring_bitmap_t *r1,
                                     const roaring_bitmap_t *r2);
@@ -258,6 +286,7 @@ void roaring_bitmap_or_inplace(roaring_bitmap_t *r1,
  * Compute the union of 'number' bitmaps.
  * Caller is responsible for freeing the result.
  * See also `roaring_bitmap_or_many_heap()`
+ * The returned pointer may be NULL in case of errors.
  */
 roaring_bitmap_t *roaring_bitmap_or_many(size_t number,
                                          const roaring_bitmap_t **rs);
@@ -273,6 +302,7 @@ roaring_bitmap_t *roaring_bitmap_or_many_heap(uint32_t number,
 /**
  * Computes the symmetric difference (xor) between two bitmaps
  * and returns new bitmap. The caller is responsible for memory management.
+ * The returned pointer may be NULL in case of errors.
  */
 roaring_bitmap_t *roaring_bitmap_xor(const roaring_bitmap_t *r1,
                                      const roaring_bitmap_t *r2);
@@ -286,6 +316,7 @@ void roaring_bitmap_xor_inplace(roaring_bitmap_t *r1,
 /**
  * Compute the xor of 'number' bitmaps.
  * Caller is responsible for freeing the result.
+ * The returned pointer may be NULL in case of errors.
  */
 roaring_bitmap_t *roaring_bitmap_xor_many(size_t number,
                                           const roaring_bitmap_t **rs);
@@ -293,6 +324,7 @@ roaring_bitmap_t *roaring_bitmap_xor_many(size_t number,
 /**
  * Computes the difference (andnot) between two bitmaps and returns new bitmap.
  * Caller is responsible for freeing the result.
+ * The returned pointer may be NULL in case of errors.
  */
 roaring_bitmap_t *roaring_bitmap_andnot(const roaring_bitmap_t *r1,
                                         const roaring_bitmap_t *r2);
@@ -531,7 +563,11 @@ bool roaring_bitmap_to_bitset(const roaring_bitmap_t *r, bitset_t *bitset);
  *
  *     ans = malloc(roaring_bitmap_get_cardinality(limit) * sizeof(uint32_t));
  *
- * Return false in case of failure (e.g., insufficient memory)
+ * This function always returns `true`
+ *
+ * For more control, see `roaring_uint32_iterator_skip` and
+ * `roaring_uint32_iterator_read`, which can be used to e.g. tell how many
+ * values were actually read.
  */
 bool roaring_bitmap_range_uint32_array(const roaring_bitmap_t *r, size_t offset,
                                        size_t limit, uint32_t *ans);
@@ -586,6 +622,8 @@ size_t roaring_bitmap_serialize(const roaring_bitmap_t *r, char *buf);
  * This function is endian-sensitive. If you have a big-endian system (e.g., a
  * mainframe IBM s390x), the data format is going to be big-endian and not
  * compatible with little-endian systems.
+ *
+ * The returned pointer may be NULL in case of errors.
  */
 roaring_bitmap_t *roaring_bitmap_deserialize(const void *buf);
 
@@ -602,6 +640,8 @@ roaring_bitmap_t *roaring_bitmap_deserialize(const void *buf);
  * The difference with `roaring_bitmap_deserialize()` is that this function
  * checks that the input buffer is a valid bitmap.  If the buffer is too small,
  * NULL is returned.
+ *
+ * The returned pointer may be NULL in case of errors.
  */
 roaring_bitmap_t *roaring_bitmap_deserialize_safe(const void *buf,
                                                   size_t maxbytes);
@@ -626,6 +666,8 @@ size_t roaring_bitmap_size_in_bytes(const roaring_bitmap_t *r);
  * This function is endian-sensitive. If you have a big-endian system (e.g., a
  * mainframe IBM s390x), the data format is going to be big-endian and not
  * compatible with little-endian systems.
+ *
+ * The returned pointer may be NULL in case of errors.
  */
 roaring_bitmap_t *roaring_bitmap_portable_deserialize(const char *buf);
 
@@ -661,6 +703,8 @@ roaring_bitmap_t *roaring_bitmap_portable_deserialize(const char *buf);
  * This function is endian-sensitive. If you have a big-endian system (e.g., a
  * mainframe IBM s390x), the data format is going to be big-endian and not
  * compatible with little-endian systems.
+ *
+ * The returned pointer may be NULL in case of errors.
  */
 roaring_bitmap_t *roaring_bitmap_portable_deserialize_safe(const char *buf,
                                                            size_t maxbytes);
@@ -684,6 +728,8 @@ roaring_bitmap_t *roaring_bitmap_portable_deserialize_safe(const char *buf,
  * This function is endian-sensitive. If you have a big-endian system (e.g., a
  * mainframe IBM s390x), the data format is going to be big-endian and not
  * compatible with little-endian systems.
+ *
+ * The returned pointer may be NULL in case of errors.
  */
 roaring_bitmap_t *roaring_bitmap_portable_deserialize_frozen(const char *buf);
 
@@ -833,6 +879,8 @@ bool roaring_bitmap_is_strict_subset(const roaring_bitmap_t *r1,
  *
  * `bitsetconversion` is a flag which determines whether container-container
  * operations force a bitset conversion.
+ *
+ * The returned pointer may be NULL in case of errors.
  */
 roaring_bitmap_t *roaring_bitmap_lazy_or(const roaring_bitmap_t *r1,
                                          const roaring_bitmap_t *r2,
@@ -868,6 +916,8 @@ void roaring_bitmap_repair_after_lazy(roaring_bitmap_t *r1);
  *
  * It is safe to repeatedly call `roaring_bitmap_lazy_xor_inplace()` on
  * the result.
+ *
+ * The returned pointer may be NULL in case of errors.
  */
 roaring_bitmap_t *roaring_bitmap_lazy_xor(const roaring_bitmap_t *r1,
                                           const roaring_bitmap_t *r2);
@@ -884,6 +934,7 @@ void roaring_bitmap_lazy_xor_inplace(roaring_bitmap_t *r1,
  * Compute the negation of the bitmap in the interval [range_start, range_end).
  * The number of negated values is range_end - range_start.
  * Areas outside the range are passed through unchanged.
+ * The returned pointer may be NULL in case of errors.
  */
 roaring_bitmap_t *roaring_bitmap_flip(const roaring_bitmap_t *r1,
                                       uint64_t range_start, uint64_t range_end);
@@ -892,6 +943,7 @@ roaring_bitmap_t *roaring_bitmap_flip(const roaring_bitmap_t *r1,
  * Compute the negation of the bitmap in the interval [range_start, range_end].
  * The number of negated values is range_end - range_start + 1.
  * Areas outside the range are passed through unchanged.
+ * The returned pointer may be NULL in case of errors.
  */
 roaring_bitmap_t *roaring_bitmap_flip_closed(const roaring_bitmap_t *x1,
                                              uint32_t range_start,
@@ -1142,7 +1194,7 @@ CROARING_DEPRECATED static inline void roaring_free_uint32_iterator(
     roaring_uint32_iterator_free(it);
 }
 
-/*
+/**
  * Reads next ${count} values from iterator into user-supplied ${buf}.
  * Returns the number of read elements.
  * This number can be smaller than ${count}, which means that iterator is
@@ -1161,6 +1213,30 @@ CROARING_DEPRECATED static inline uint32_t roaring_read_uint32_iterator(
     roaring_uint32_iterator_t *it, uint32_t *buf, uint32_t count) {
     return roaring_uint32_iterator_read(it, buf, count);
 }
+
+/**
+ * Skip the next ${count} values from iterator.
+ * Returns the number of values actually skipped.
+ * The number can be smaller than ${count}, which means that iterator is
+ * drained.
+ *
+ * This function is equivalent to calling `roaring_uint32_iterator_advance()`
+ * ${count} times but is much more efficient.
+ */
+uint32_t roaring_uint32_iterator_skip(roaring_uint32_iterator_t *it,
+                                      uint32_t count);
+
+/**
+ * Skip the previous ${count} values from iterator (move backwards).
+ * Returns the number of values actually skipped backwards.
+ * The number can be smaller than ${count}, which means that iterator reached
+ * the beginning.
+ *
+ * This function is equivalent to calling `roaring_uint32_iterator_previous()`
+ * ${count} times but is much more efficient.
+ */
+uint32_t roaring_uint32_iterator_skip_backward(roaring_uint32_iterator_t *it,
+                                               uint32_t count);
 
 #ifdef __cplusplus
 }

@@ -218,6 +218,30 @@ DEFINE_TEST(is_really_empty) {
     roaring_bitmap_free(bm);
 }
 
+#if !CROARING_IS_BIG_ENDIAN
+// https://github.com/Ezibenroc/PyRoaringBitMap/issues/124
+DEFINE_TEST(PyRoaringBitMap124) {
+    // adversarial test case
+    const char data[] = {
+        0x3a, 0x30, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09, 0x00,
+        0x10, 0x00, 0x00, 0x00, 0x32, 0x00, 0x33, 0x00, 0x34, 0x00, 0x35, 0x00,
+        0x36, 0x00, 0x37, 0x00, 0x38, 0x00, 0x3a, 0x00, 0x3b, 0x00, 0x3c, 0x00,
+    };
+    size_t length = sizeof(data);
+    roaring_bitmap_t *deserialized_bitmap =
+        roaring_bitmap_portable_deserialize_safe(data, length);
+    assert_true(deserialized_bitmap != NULL);
+    roaring_bitmap_printf_describe(deserialized_bitmap);
+    const char *reason_failure = NULL;
+    assert_true(
+        roaring_bitmap_internal_validate(deserialized_bitmap, &reason_failure));
+    roaring_bitmap_free(deserialized_bitmap);
+
+    const roaring_bitmap_t *r2 = roaring_bitmap_frozen_view(data, length);
+    assert_true(r2 == NULL);
+}
+#endif
+
 DEFINE_TEST(inplaceorwide) {
     uint64_t end = 4294901761;
     roaring_bitmap_t *r1 = roaring_bitmap_from_range(0, 1, 1);
@@ -226,6 +250,28 @@ DEFINE_TEST(inplaceorwide) {
     assert_true(roaring_bitmap_get_cardinality(r1) == end);
     roaring_bitmap_free(r1);
     roaring_bitmap_free(r2);
+}
+
+DEFINE_TEST(issue743) {
+    roaring_bitmap_t *A = roaring_bitmap_from(1, 2, 3, 4);
+    roaring_bitmap_t *B =
+        roaring_bitmap_from(0x38000000, 0x38000001, 0x38000002, 0x38000003);
+    roaring_bitmap_set_copy_on_write(A, true);
+    roaring_bitmap_set_copy_on_write(B, true);
+    roaring_bitmap_t *C = roaring_bitmap_andnot(B, A);
+    roaring_bitmap_set_copy_on_write(C, false);
+    roaring_bitmap_free(A);
+    roaring_bitmap_free(B);
+    roaring_bitmap_t *D = roaring_bitmap_from(1, 2, 3, 4, 5, 6);
+    roaring_bitmap_t *E = roaring_bitmap_lazy_xor(D, C);
+    roaring_bitmap_repair_after_lazy(E);
+    roaring_bitmap_t *expectedE = roaring_bitmap_from(
+        1, 2, 3, 4, 5, 6, 939524096, 939524097, 939524098, 939524099);
+    assert_true(roaring_bitmap_equals(E, expectedE));
+    roaring_bitmap_free(C);
+    roaring_bitmap_free(D);
+    roaring_bitmap_free(E);
+    roaring_bitmap_free(expectedE);
 }
 
 void can_copy_empty(bool copy_on_write) {
@@ -765,6 +811,9 @@ void test_example(bool copy_on_write) {
     uint32_t *arr3 = (uint32_t *)malloc(limit * sizeof(uint32_t));
     assert_true(arr3 != NULL);
     roaring_bitmap_range_uint32_array(r1, offset, limit, arr3);
+    for (size_t i = 0; i < card1 - offset; ++i) {
+        assert_int_equal(arr3[i], arr1[i + offset]);
+    }
     free(arr3);
 
     roaring_bitmap_t *r1f = roaring_bitmap_of_ptr(card1, arr1);
@@ -4140,6 +4189,164 @@ DEFINE_TEST(read_uint32_iterator_zero_count) {
     roaring_bitmap_free(r);
 }
 
+void test_uint32_iterator_skip(uint8_t type) {
+    uint32_t *ref_values;
+    uint32_t ref_count;
+    test_iterator_generate_data(&ref_values, &ref_count);
+
+    roaring_bitmap_t *r = roaring_bitmap_create();
+    for (uint32_t i = 0; i < ref_count; i++) {
+        roaring_bitmap_add(r, ref_values[i]);
+    }
+    if (type != UINT8_MAX) {
+        convert_all_containers(r, type);
+    }
+
+    // Ensure skip(n) is equivalent to calling advance() n times
+    roaring_uint32_iterator_t iter_skip;
+    roaring_iterator_init(r, &iter_skip);
+
+    for (uint32_t count = 0; count <= ref_count + 200; count += 181) {
+        // Reset the iterator
+        roaring_iterator_init(r, &iter_skip);
+
+        uint32_t skip_result = roaring_uint32_iterator_skip(&iter_skip, count);
+
+        // Should be equivalent
+        assert_int_equal(skip_result, minimum_uint32(count, ref_count));
+        bool expected_has_value = count < ref_count;
+        assert_int_equal(iter_skip.has_value, expected_has_value);
+        if (iter_skip.has_value) {
+            assert_int_equal(iter_skip.current_value, ref_values[count]);
+        }
+
+        // Also skip but after advancing by one already
+        if (count > 0) {
+            roaring_iterator_init(r, &iter_skip);
+            roaring_uint32_iterator_advance(&iter_skip);
+
+            skip_result = roaring_uint32_iterator_skip(&iter_skip, count - 1);
+
+            assert_int_equal(skip_result,
+                             minimum_uint32(count - 1, ref_count - 1));
+            assert_int_equal(iter_skip.has_value, expected_has_value);
+            if (iter_skip.has_value) {
+                assert_int_equal(iter_skip.current_value, ref_values[count]);
+            }
+        }
+    }
+
+    // Test skip way beyond end
+    roaring_iterator_init(r, &iter_skip);
+    uint32_t skipped = roaring_uint32_iterator_skip(&iter_skip, UINT32_MAX);
+    assert_int_equal(skipped, ref_count);
+    assert_false(iter_skip.has_value);
+
+    // Ensure we can go back after skipping as far as we can.
+    roaring_uint32_iterator_previous(&iter_skip);
+    assert_true(iter_skip.has_value);
+    assert_int_equal(iter_skip.current_value, ref_values[ref_count - 1]);
+
+    roaring_bitmap_free(r);
+    free(ref_values);
+}
+
+DEFINE_TEST(test_uint32_iterator_skip_array) {
+    test_uint32_iterator_skip(ARRAY_CONTAINER_TYPE);
+}
+
+DEFINE_TEST(test_uint32_iterator_skip_bitset) {
+    test_uint32_iterator_skip(BITSET_CONTAINER_TYPE);
+}
+
+DEFINE_TEST(test_uint32_iterator_skip_run) {
+    test_uint32_iterator_skip(RUN_CONTAINER_TYPE);
+}
+
+DEFINE_TEST(test_uint32_iterator_skip_native) {
+    test_uint32_iterator_skip(UINT8_MAX);
+}
+
+static void test_uint32_iterator_skip_backward(uint8_t type) {
+    uint32_t *ref_values;
+    uint32_t ref_count;
+    test_iterator_generate_data(&ref_values, &ref_count);
+
+    roaring_bitmap_t *r = roaring_bitmap_create();
+    for (uint32_t i = 0; i < ref_count; i++) {
+        roaring_bitmap_add(r, ref_values[i]);
+    }
+    if (type != UINT8_MAX) {
+        convert_all_containers(r, type);
+    }
+
+    // Ensure skip(n) is equivalent to calling advance() n times
+    roaring_uint32_iterator_t iter_skip;
+    roaring_iterator_init(r, &iter_skip);
+
+    for (uint32_t count = 0; count <= ref_count + 200; count += 181) {
+        // Reset the iterator
+        roaring_iterator_init_last(r, &iter_skip);
+
+        uint32_t skip_result =
+            roaring_uint32_iterator_skip_backward(&iter_skip, count);
+
+        // Should be equivalent
+        assert_int_equal(skip_result, minimum_uint32(count, ref_count));
+        bool expected_has_value = count < ref_count;
+        assert_int_equal(iter_skip.has_value, expected_has_value);
+        if (iter_skip.has_value) {
+            assert_int_equal(iter_skip.current_value,
+                             ref_values[ref_count - count - 1]);
+        }
+
+        // Also skip but after advancing by one already
+        if (count > 0) {
+            roaring_iterator_init_last(r, &iter_skip);
+            roaring_uint32_iterator_previous(&iter_skip);
+
+            skip_result =
+                roaring_uint32_iterator_skip_backward(&iter_skip, count - 1);
+
+            assert_int_equal(skip_result,
+                             minimum_uint32(count - 1, ref_count - 1));
+            assert_int_equal(iter_skip.has_value, expected_has_value);
+            if (iter_skip.has_value) {
+                assert_int_equal(iter_skip.current_value,
+                                 ref_values[ref_count - count - 1]);
+            }
+        }
+    }
+
+    // Test skip way beyond start
+    roaring_iterator_init_last(r, &iter_skip);
+    uint32_t skipped =
+        roaring_uint32_iterator_skip_backward(&iter_skip, UINT32_MAX);
+    assert_int_equal(skipped, ref_count);
+    assert_false(iter_skip.has_value);
+
+    // Ensure we can go forward after skipping backward as far as we can.
+    roaring_uint32_iterator_advance(&iter_skip);
+    assert_true(iter_skip.has_value);
+    assert_int_equal(iter_skip.current_value, ref_values[0]);
+
+    roaring_bitmap_free(r);
+    free(ref_values);
+}
+
+DEFINE_TEST(test_uint32_iterator_skip_backward_array) {
+    test_uint32_iterator_skip_backward(ARRAY_CONTAINER_TYPE);
+}
+DEFINE_TEST(test_uint32_iterator_skip_backward_bitset) {
+    test_uint32_iterator_skip_backward(BITSET_CONTAINER_TYPE);
+}
+DEFINE_TEST(test_uint32_iterator_skip_backward_run) {
+    test_uint32_iterator_skip_backward(RUN_CONTAINER_TYPE);
+}
+DEFINE_TEST(test_uint32_iterator_skip_backward_native) {
+    test_uint32_iterator_skip_backward(UINT8_MAX);
+}
+
 DEFINE_TEST(test_add_range) {
     // autoconversion: BITSET -> BITSET -> RUN
     {
@@ -4538,6 +4745,9 @@ DEFINE_TEST(test_frozen_serialization_max_containers) {
     frozen_serialization_compare(r);
 }
 
+#if ROARING_UNSAFE_FROZEN_TESTS
+// This test is unsafe, as it may trigger unaligned memory access
+// It is only enabled if ROARING_UNSAFE_FROZEN_TESTS is defined.
 DEFINE_TEST(test_portable_deserialize_frozen) {
     roaring_bitmap_t *r1 =
         roaring_bitmap_from(1, 2, 3, 100, 1000, 10000, 1000000, 20000000);
@@ -4631,6 +4841,7 @@ DEFINE_TEST(test_portable_deserialize_frozen) {
     roaring_bitmap_free(r2);
     free(serialized);
 }
+#endif  // ROARING_UNSAFE_FROZEN_TESTS
 
 DEFINE_TEST(convert_to_bitset) {
     roaring_bitmap_t *r1 = roaring_bitmap_create();
@@ -4805,6 +5016,7 @@ int main() {
     tellmeall();
 
     const struct CMUnitTest tests[] = {
+        cmocka_unit_test(issue743),
         cmocka_unit_test(fuzz_deserializer),
         cmocka_unit_test(issue660),
         cmocka_unit_test(issue538b),
@@ -4822,6 +5034,7 @@ int main() {
         cmocka_unit_test(issue316),
         cmocka_unit_test(issue288),
 #if !CROARING_IS_BIG_ENDIAN
+        cmocka_unit_test(PyRoaringBitMap124),
         cmocka_unit_test(issue245),
 #endif
         cmocka_unit_test(issue208),
@@ -4949,6 +5162,14 @@ int main() {
         cmocka_unit_test(test_iterator_reuse),
         cmocka_unit_test(test_iterator_reuse_many),
         cmocka_unit_test(read_uint32_iterator_zero_count),
+        cmocka_unit_test(test_uint32_iterator_skip_array),
+        cmocka_unit_test(test_uint32_iterator_skip_bitset),
+        cmocka_unit_test(test_uint32_iterator_skip_run),
+        cmocka_unit_test(test_uint32_iterator_skip_native),
+        cmocka_unit_test(test_uint32_iterator_skip_backward_array),
+        cmocka_unit_test(test_uint32_iterator_skip_backward_bitset),
+        cmocka_unit_test(test_uint32_iterator_skip_backward_run),
+        cmocka_unit_test(test_uint32_iterator_skip_backward_native),
         cmocka_unit_test(test_add_range),
         cmocka_unit_test(test_remove_range),
         cmocka_unit_test(test_remove_many),
@@ -4956,7 +5177,9 @@ int main() {
 #if !CROARING_IS_BIG_ENDIAN
         cmocka_unit_test(test_frozen_serialization),
         cmocka_unit_test(test_frozen_serialization_max_containers),
+#if ROARING_UNSAFE_FROZEN_TESTS
         cmocka_unit_test(test_portable_deserialize_frozen),
+#endif  // ROARING_UNSAFE_FROZEN_TESTS
         cmocka_unit_test(issue_15jan2024),
 #endif
     };
