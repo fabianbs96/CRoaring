@@ -1,3 +1,15 @@
+/*
+ * containers.h
+ *
+ * This header is the central internal interface for Roaring container
+ * operations. It ties together the concrete container types (array, bitset,
+ * run, and shared containers), their type codes, common helper functions, and
+ * the mixed-operation headers used to combine different representations.
+ *
+ * In practice, it acts as the dispatch layer that lets higher-level bitmap
+ * code manipulate containers through a uniform interface while still selecting
+ * type-specific implementations when needed.
+ */
 #ifndef CONTAINERS_CONTAINERS_H
 #define CONTAINERS_CONTAINERS_H
 
@@ -554,7 +566,12 @@ inline bool container_contains(
     const container_t *c, uint16_t val,
     uint8_t typecode  // !!! should be second argument?
 ) {
-    c = container_unwrap_shared(c, &typecode);
+    if (typecode == SHARED_CONTAINER_TYPE) {
+        typecode = const_CAST_shared(c)->typecode;
+        assert(typecode != SHARED_CONTAINER_TYPE);
+        c = const_CAST_shared(c)->container;
+    }
+
     switch (typecode) {
         case BITSET_CONTAINER_TYPE:
             return bitset_container_get(const_CAST_bitset(c), val);
@@ -2626,6 +2643,35 @@ bool container_iterator_skip_backward(const container_t *c, uint8_t typecode,
                                       uint32_t skip_count,
                                       uint32_t *consumed_count,
                                       uint16_t *value_out);
+
+/**
+ * Finds the end of the consecutive run starting at the current iterator
+ * position within a container. Returns the low16 of the last consecutive
+ * value. If there are more values in the container after the run,
+ * *has_more is set to true, the iterator is positioned at the next value,
+ * and *value is updated to that value. Otherwise *has_more is set to false.
+ *
+ * *value must be the low 16 bits of the current value at the iterator's
+ * position on entry.
+ */
+uint16_t container_iterator_find_run_end(const container_t *c, uint8_t typecode,
+                                         roaring_container_iterator_t *it,
+                                         uint16_t *value, bool *has_more);
+
+/**
+ * Finds the start of the consecutive run ending at the current iterator
+ * position within a container. Returns the low16 of the first consecutive
+ * value. If there are more values in the container before the run,
+ * *has_more is set to true, the iterator is positioned at the previous value,
+ * and *value is updated to that value. Otherwise *has_more is set to false.
+ *
+ * *value must be the low 16 bits of the current value at the iterator's
+ * position on entry.
+ */
+uint16_t container_iterator_find_run_start(const container_t *c,
+                                           uint8_t typecode,
+                                           roaring_container_iterator_t *it,
+                                           uint16_t *value, bool *has_more);
 
 #ifdef __cplusplus
 }

@@ -13,10 +13,8 @@ A C++ header for Roaring Bitmaps.
 #include <string>
 
 #if !defined(ROARING_EXCEPTIONS)
-// __cpp_exceptions is required by C++98 and we require C++11 or better.
-#ifndef __cpp_exceptions
-#error "__cpp_exceptions should be defined"
-#endif
+// We assume that if __cpp_exceptions is given a positive integer
+// value, then exceptions are enabled.
 #if __cpp_exceptions
 #define ROARING_EXCEPTIONS 1
 #else
@@ -1000,6 +998,24 @@ class RoaringSetBitBiDirectionalIterator final {
     /** DEPRECATED, use `move_equalorlarger`.*/
     CROARING_DEPRECATED void equalorlarger(uint32_t val) {
         api::roaring_uint32_iterator_move_equalorlarger(&i, val);
+    }
+
+    /**
+     * Reads up to ${count} ranges into ${buf}. Returns the number of ranges
+     * read. See roaring_uint32_iterator_read_ranges for full semantics.
+     */
+    size_t read_ranges(api::roaring_uint32_range_closed_t *buf, size_t count) {
+        return api::roaring_uint32_iterator_read_ranges(&i, buf, count);
+    }
+
+    /**
+     * Reads up to ${count} ranges in reverse into ${buf}. Returns the number
+     * of ranges read. See roaring_uint32_iterator_read_prev_ranges for full
+     * semantics.
+     */
+    size_t read_prev_ranges(api::roaring_uint32_range_closed_t *buf,
+                            size_t count) {
+        return api::roaring_uint32_iterator_read_prev_ranges(&i, buf, count);
     }
 
     type_of_iterator &operator--() {  // prefix --

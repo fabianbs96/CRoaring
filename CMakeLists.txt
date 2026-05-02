@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8...3.15)
+cmake_minimum_required(VERSION 3.15)
 project(RoaringBitmap
   DESCRIPTION "Roaring bitmaps in C (and C++)"
   LANGUAGES CXX C
@@ -19,10 +19,10 @@ if(CMAKE_C_COMPILER_ID STREQUAL "AppleClang" AND CMAKE_C_COMPILER_VERSION VERSIO
 endif()
 set(ROARING_LIB_NAME roaring)
 set(PROJECT_VERSION_MAJOR 4)
-set(PROJECT_VERSION_MINOR 5)
-set(PROJECT_VERSION_PATCH 2)
-set(ROARING_LIB_VERSION "4.5.2" CACHE STRING "Roaring library version")
-set(ROARING_LIB_SOVERSION "20" CACHE STRING "Roaring library soversion")
+set(PROJECT_VERSION_MINOR 6)
+set(PROJECT_VERSION_PATCH 1)
+set(ROARING_LIB_VERSION "4.6.1" CACHE STRING "Roaring library version")
+set(ROARING_LIB_SOVERSION "21" CACHE STRING "Roaring library soversion")
 
 option(ROARING_EXCEPTIONS "Enable exception-throwing interface" ON)
 if(NOT ROARING_EXCEPTIONS)
